@@ -65,54 +65,53 @@ var WebSocketDispatcher = function (url, role) {
 
 
 var Video = function(wsocket) {
-    var track;
+    var stream;
     var server;
     var online = false;
     var we_are_server = (anchor == 'share');
-    
-    var Video = function() {
-        if (we_are_server) {
-            // Server/callee
-            console.log("We are the stream source, doing getDisplayMedia.");
-            var promise;
-            // Modern browsers have navigator.mediaDevices, slightly older ones have getDisplayMedia at navigator
-            if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-                promise = navigator.mediaDevices.getDisplayMedia({video: true, audio: false});
-            } else {
-                promise = navigator.getDisplayMedia({video: true, audio: false});
-            }
-            promise.then(function (display_stream) {
-                console.log("Succesful getDisplayMedia");
-                console.log(display_stream);
-	            var video = document.getElementsByTagName("video")[0];
-                video.srcObject = display_stream;
-                track = display_stream.getTracks()[0];
-                console.log(track);
-                video.play();
-            }).catch(function(e){console.log("getDisplayMedia");console.trace();console.log(e);});
-            console.log("Past getUserMedia. Binding OFFER_SDP to offerReceived");
-            wsocket.bind('OFFER_SDP', offerReceived);
+    var tried_getDisplayMedia = false;
+
+    var VideoServer = function() { // Sharer / callee
+        console.log("We are the stream source, doing getDisplayMedia.");
+        var promise;
+        // Modern browsers have navigator.mediaDevices, slightly older ones have getDisplayMedia at navigator
+        if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+            promise = navigator.mediaDevices.getDisplayMedia({video: true, audio: false});
         } else {
-            // Client/caller
-            console.log("We are a client, set up a peer connection.");
-            server = new RTCPeerConnection({iceServers: iceServers});
-            console.log("Creating offer.");
-            server.createOffer(function (new_offer) {
-                console.log("Creating offer successful, setting LocalDescription");
-                server.setLocalDescription(new_offer).then(function() {
-                    console.log("setLocalDescription succesful.");
-                }).catch(function(e) {console.log("setLocalDescription");console.trace();console.log(e);});
-                console.log("Past setLocalDescription.");
-            }, function(e){console.log("createOffer");console.trace();console.log(e);}, { offerToReceiveAudio: true, offerToReceiveVideo: true});
-            console.log("Past createOffer, Binding addStreamToVideoElement to pc.ontrack.");
-            server.ontrack = addStreamToVideoElement;
-            console.log("Binding addExtraCandidate to pc.onicecandidate");
-            server.onicecandidate = addExtraCandidate;
-            server.oniceconnectionstatechange = connectionStateChange;
-            server.onconnectionstatechange = connectionStateChange;
-            wsocket.bind('ANSWER_SDP', answerReceived);
+            promise = navigator.getDisplayMedia({video: true, audio: false});
         }
-        
+        promise.then(function (display_stream) {
+            console.log("Succesful getDisplayMedia");
+            console.log("Stream:");
+            console.log(display_stream);
+            var video = document.getElementsByTagName("video")[0];
+            video.srcObject = display_stream;
+            stream = display_stream;
+            console.log(stream);
+            video.play();
+        }).catch(function(e){console.log("getDisplayMedia");console.trace();console.log(e);});
+        console.log("Past getUserMedia. Binding OFFER_SDP to offerReceived");
+        wsocket.bind('OFFER_SDP', offerReceived);
+    }
+
+    var VideoClient = function() { // Caller
+        console.log("We are a client, set up a peer connection.");
+        server = new RTCPeerConnection({iceServers: iceServers});
+        console.log("Creating offer.");
+        server.createOffer(function (new_offer) {
+            console.log("Creating offer successful, setting LocalDescription");
+            server.setLocalDescription(new_offer).then(function() {
+                console.log("setLocalDescription succesful.");
+            }).catch(function(e) {console.log("setLocalDescription");console.trace();console.log(e);});
+            console.log("Past setLocalDescription.");
+        }, function(e){console.log("createOffer");console.trace();console.log(e);}, { offerToReceiveAudio: true, offerToReceiveVideo: true});
+        console.log("Past createOffer, Binding addStreamToVideoElement to pc.ontrack.");
+        server.ontrack = addStreamToVideoElement;
+        console.log("Binding addExtraCandidate to pc.onicecandidate");
+        server.onicecandidate = addExtraCandidate;
+        server.oniceconnectionstatechange = connectionStateChange;
+        server.onconnectionstatechange = connectionStateChange;
+        wsocket.bind('ANSWER_SDP', answerReceived);
     };
 
     var connectionStateChange = function(e) {
@@ -120,12 +119,13 @@ var Video = function(wsocket) {
     };
     
     var addStreamToVideoElement = function(obj) {
+            console.log("Getting track");
             if (obj.track.kind == "video") {
-                obj.track.muted = false;
                 console.log(obj);
                 var video = document.getElementsByTagName('video')[0];
                 video.srcObject = obj.streams[0];
-                //video.controls = false;
+                video.controls = false;
+                video.muted = true;
                 video.play();
                 /* Click for full screen */
                 document.body.addEventListener('click', function() {
@@ -165,12 +165,11 @@ var Video = function(wsocket) {
     var offerReceived = function(data, src) {
         console.log("Received offer. Creating peerConnection and adding the stream");
         console.log(data);
-        console.log(track);
         var pc = new RTCPeerConnection({iceServers: iceServers});
         pc.src = src;
         pc.oniceconnectionstatechange = connectionStateChange;
         pc.onconnectionstatechange = connectionStateChange;
-        pc.addTrack(track);
+        pc.addTrack(stream.getTracks()[0], stream);
         console.log("Create sessiondescription");
         var remote_offer = new RTCSessionDescription({'type': 'offer', 'sdp': data.sdp});
         console.log("Setting remoteDescription");
@@ -198,8 +197,18 @@ var Video = function(wsocket) {
             console.log("Past remote description");
         }
     };
-    
-    Video();
+   
+    if (we_are_server) {
+        document.body.addEventListener("click", function(e) {
+            if (tried_getDisplayMedia) {
+                return;
+            }
+            tried_getDisplayMedia = true;
+            VideoServer();
+        });
+    } else {
+        VideoClient();
+    }
 };
 
 function openFullscreen(elem) {
